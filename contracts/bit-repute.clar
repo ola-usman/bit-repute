@@ -424,3 +424,82 @@
     (ok content-id)
   )
 )
+
+(define-public (vote-content
+    (content-id uint)
+    (vote-positive bool)
+  )
+  (let (
+      (content-data (unwrap! (map-get? content content-id) ERR-NOT-FOUND))
+      (voter-data (unwrap! (map-get? users tx-sender) ERR-NOT-FOUND))
+      (creator (get creator content-data))
+      (existing-vote (map-get? votes {
+        content-id: content-id,
+        voter: tx-sender,
+      }))
+      (voting-weight (calculate-voting-weight tx-sender))
+      (current-total (get total-votes content-data))
+      (current-positive (get positive-votes content-data))
+    )
+    (asserts! (var-get contract-enabled) ERR-UNAUTHORIZED)
+    (asserts! (not (is-eq tx-sender creator)) ERR-SELF-INTERACTION)
+    (asserts! (is-none existing-vote) ERR-ALREADY-VOTED)
+    (asserts! (> (get stake-amount voter-data) u0) ERR-STAKE-REQUIRED)
+    (asserts! (validate-content-id content-id) ERR-INVALID-INPUT)
+    ;; Record the vote
+    (map-set votes {
+      content-id: content-id,
+      voter: tx-sender,
+    } {
+      vote-type: vote-positive,
+      stake-weight: voting-weight,
+      timestamp: stacks-block-height,
+    })
+    ;; Update content vote counts
+    (let (
+        (new-total (+ current-total voting-weight))
+        (new-positive (if vote-positive
+          (+ current-positive voting-weight)
+          current-positive
+        ))
+        (new-quality-score (if (> new-total u0)
+          (/ (* new-positive u1000) new-total)
+          u0
+        ))
+      )
+      (map-set content content-id
+        (merge content-data {
+          total-votes: new-total,
+          positive-votes: new-positive,
+          quality-score: new-quality-score,
+        })
+      )
+      ;; Update creator reputation based on vote
+      (let ((reputation-change (if vote-positive
+          (to-int voting-weight)
+          (- 0 (to-int voting-weight))
+        )))
+        (unwrap! (update-reputation creator reputation-change "vote-received")
+          ERR-OWNER-ONLY
+        )
+      )
+      ;; Update voter reputation (small bonus for participation)
+      (unwrap! (update-reputation tx-sender 1 "vote-participation")
+        ERR-OWNER-ONLY
+      )
+      (ok voting-weight)
+    )
+  )
+)
+
+(define-public (claim-content-rewards (content-id uint))
+  (let (
+      (content-data (unwrap! (map-get? content content-id) ERR-NOT-FOUND))
+      (creator (get creator content-data))
+    )
+    (asserts! (is-eq tx-sender creator) ERR-UNAUTHORIZED)
+    (asserts! (not (get reward-claimed content-data)) ERR-UNAUTHORIZED)
+    (asserts! (validate-content-id content-id) ERR-INVALID-INPUT)
+    (distribute-content-rewards content-id)
+  )
+)
