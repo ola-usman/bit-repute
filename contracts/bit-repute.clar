@@ -503,3 +503,81 @@
     (distribute-content-rewards content-id)
   )
 )
+
+;; PUBLIC FUNCTIONS - SOCIAL FEATURES
+
+(define-public (follow-user (user-to-follow principal))
+  (begin
+    (asserts! (not (is-eq tx-sender user-to-follow)) ERR-SELF-INTERACTION)
+    (asserts! (validate-user user-to-follow) ERR-NOT-FOUND)
+    (asserts! (is-some (map-get? users tx-sender)) ERR-NOT-FOUND)
+    (map-set user-following {
+      follower: tx-sender,
+      following: user-to-follow,
+    }
+      true
+    )
+    (unwrap! (update-reputation user-to-follow 5 "new-follower") ERR-OWNER-ONLY)
+    (ok true)
+  )
+)
+
+(define-public (unfollow-user (user-to-unfollow principal))
+  (begin
+    (asserts! (not (is-eq tx-sender user-to-unfollow)) ERR-SELF-INTERACTION)
+    (map-delete user-following {
+      follower: tx-sender,
+      following: user-to-unfollow,
+    })
+    (ok true)
+  )
+)
+
+;; PUBLIC FUNCTIONS - REWARD SYSTEM
+
+(define-public (add-to-reward-pool (amount uint))
+  (begin
+    (asserts! (validate-amount amount) ERR-INVALID-INPUT)
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (var-set content-reward-pool (+ (var-get content-reward-pool) amount))
+    (ok amount)
+  )
+)
+
+;; ADMIN FUNCTIONS
+
+(define-public (set-contract-enabled (enabled bool))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set contract-enabled enabled)
+    (ok enabled)
+  )
+)
+
+(define-public (set-min-stake-amount (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (validate-amount amount) ERR-INVALID-INPUT)
+    (var-set min-stake-amount amount)
+    (ok amount)
+  )
+)
+
+(define-public (verify-user (user principal))
+  (let ((user-data (unwrap! (map-get? users user) ERR-NOT-FOUND)))
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (validate-user user) ERR-INVALID-INPUT)
+    (map-set users user (merge user-data { verified: true }))
+    (unwrap! (update-reputation user 100 "verification") ERR-OWNER-ONLY)
+    (ok true)
+  )
+)
+
+(define-public (emergency-withdraw (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (validate-amount amount) ERR-INVALID-INPUT)
+    (try! (as-contract (stx-transfer? amount tx-sender CONTRACT-OWNER)))
+    (ok amount)
+  )
+)
