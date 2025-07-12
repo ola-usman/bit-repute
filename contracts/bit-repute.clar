@@ -361,3 +361,66 @@
     (ok amount)
   )
 )
+
+(define-public (unstake-tokens (amount uint))
+  (let (
+      (user-data (unwrap! (map-get? users tx-sender) ERR-NOT-FOUND))
+      (current-stake (get stake-amount user-data))
+    )
+    (asserts! (validate-amount amount) ERR-INVALID-INPUT)
+    (asserts! (>= current-stake amount) ERR-INSUFFICIENT-FUNDS)
+    (try! (as-contract (stx-transfer? amount tx-sender tx-sender)))
+    (map-set users tx-sender
+      (merge user-data {
+        stake-amount: (- current-stake amount),
+        last-action-block: stacks-block-height,
+      })
+    )
+    (ok amount)
+  )
+)
+
+;; PUBLIC FUNCTIONS - CONTENT MANAGEMENT
+
+(define-public (create-content
+    (content-hash (string-ascii 64))
+    (title (string-utf8 100))
+    (category (string-ascii 20))
+    (stake-backing uint)
+  )
+  (let (
+      (user-data (unwrap! (map-get? users tx-sender) ERR-NOT-FOUND))
+      (content-id (+ (var-get content-id-nonce) u1))
+      (user-stake (get stake-amount user-data))
+    )
+    (asserts! (var-get contract-enabled) ERR-UNAUTHORIZED)
+    (asserts! (> (get stake-amount user-data) u0) ERR-STAKE-REQUIRED)
+    (asserts! (>= user-stake stake-backing) ERR-INSUFFICIENT-FUNDS)
+    (asserts! (validate-amount stake-backing) ERR-INVALID-INPUT)
+    (asserts! (validate-content-hash content-hash) ERR-INVALID-INPUT)
+    (asserts! (validate-title title) ERR-INVALID-INPUT)
+    (asserts! (validate-category category) ERR-INVALID-INPUT)
+    (var-set content-id-nonce content-id)
+    (map-set content content-id {
+      creator: tx-sender,
+      content-hash: content-hash,
+      title: title,
+      category: category,
+      timestamp: stacks-block-height,
+      total-votes: u0,
+      positive-votes: u0,
+      quality-score: u0,
+      reward-claimed: false,
+      stake-backing: stake-backing,
+    })
+    (map-set users tx-sender
+      (merge user-data {
+        total-content: (+ (get total-content user-data) u1),
+        stake-amount: (- user-stake stake-backing),
+        last-action-block: stacks-block-height,
+      })
+    )
+    (unwrap! (update-reputation tx-sender 10 "content-creation") ERR-OWNER-ONLY)
+    (ok content-id)
+  )
+)
