@@ -280,3 +280,84 @@
     (ok new-score)
   )
 )
+
+(define-private (calculate-voting-weight (voter principal))
+  (let (
+      (user-data (unwrap! (map-get? users voter) u1))
+      (reputation (get reputation-score user-data))
+      (stake-amount (get stake-amount user-data))
+    )
+    (+ u1 (/ reputation u100) (/ stake-amount u1000000))
+    ;; Base weight + reputation bonus + stake bonus
+  )
+)
+
+(define-private (distribute-content-rewards (content-id uint))
+  (let (
+      (content-data (unwrap! (map-get? content content-id) ERR-NOT-FOUND))
+      (creator (get creator content-data))
+      (quality-score (get quality-score content-data))
+      (total-votes (get total-votes content-data))
+      (reward-amount (/ (* quality-score (var-get content-reward-pool)) u10000))
+    )
+    (if (and (> reward-amount u0) (not (get reward-claimed content-data)))
+      (begin
+        (unwrap! (as-contract (stx-transfer? reward-amount tx-sender creator))
+          ERR-INSUFFICIENT-FUNDS
+        )
+        (map-set content content-id (merge content-data { reward-claimed: true }))
+        (var-set content-reward-pool
+          (- (var-get content-reward-pool) reward-amount)
+        )
+        (unwrap!
+          (update-reputation creator (to-int (/ quality-score u10))
+            "content-reward"
+          )
+          ERR-OWNER-ONLY
+        )
+        (ok reward-amount)
+      )
+      (ok u0)
+    )
+  )
+)
+
+;; PUBLIC FUNCTIONS - USER MANAGEMENT
+
+(define-public (register-user)
+  (let ((existing-user (map-get? users tx-sender)))
+    (asserts! (is-none existing-user) ERR-ALREADY-EXISTS)
+    (map-set users tx-sender {
+      reputation-score: u100, ;; Starting reputation
+      total-content: u0,
+      total-earnings: u0,
+      stake-amount: u0,
+      last-action-block: stacks-block-height,
+      verified: false,
+      join-block: stacks-block-height,
+    })
+    (ok true)
+  )
+)
+
+(define-public (stake-tokens (amount uint))
+  (let (
+      (user-data (unwrap! (map-get? users tx-sender) ERR-NOT-FOUND))
+      (current-stake (get stake-amount user-data))
+    )
+    (asserts! (validate-amount amount) ERR-INVALID-INPUT)
+    (asserts! (>= amount (var-get min-stake-amount)) ERR-INVALID-AMOUNT)
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (map-set users tx-sender
+      (merge user-data {
+        stake-amount: (+ current-stake amount),
+        last-action-block: stacks-block-height,
+      })
+    )
+    (unwrap!
+      (update-reputation tx-sender (to-int (/ amount u100000)) "stake-increase")
+      ERR-OWNER-ONLY
+    )
+    (ok amount)
+  )
+)
